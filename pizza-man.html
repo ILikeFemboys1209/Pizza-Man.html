@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Pizza-Man</title>
+<style>
+  body {
+    margin: 0;
+    background: black;
+    overflow: hidden;
+    font-family: monospace;
+    color: white;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    user-select: none;
+  }
+  canvas {
+    background: black;
+    image-rendering: pixelated;
+    border: 4px solid #ffa500;
+    border-radius: 12px;
+  }
+  #startScreen {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: black;
+    color: #ff5500;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    font-size: 2em;
+    z-index: 10;
+  }
+  #startScreen button {
+    margin-top: 20px;
+    font-size: 1em;
+    padding: 10px 20px;
+    background: #ff6600;
+    border: none;
+    border-radius: 6px;
+    color: black;
+    font-weight: bold;
+  }
+</style>
+</head>
+<body>
+
+<div id="startScreen">
+  <div>Welcome, Dickwad</div>
+  <button id="startButton">Start Game</button>
+</div>
+
+<canvas id="game" width="320" height="320"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const tileSize = 16;
+  const rows = 20;
+  const cols = 20;
+
+  const maze = [
+    "####################",
+    "#........#.........#",
+    "#.####.#.#.#######.#",
+    "#o#  #.#.#.#     #.#",
+    "#.####.#.#.#.###.#.#",
+    "#......#...#.# #.#.#",
+    "######.#####.# #.#.#",
+    "#...........# #.#.#o",
+    "#.########### #.#.#.",
+    "#.#           #.#.#.",
+    "#.# ###########.#.#.",
+    "#.#             #.#.",
+    "#.###############.#.",
+    "#.................#.",
+    "####################"
+  ];
+
+  // Adjust maze to 20x20 by padding or trimming rows
+  while (maze.length < rows) maze.push("#".repeat(cols));
+  
+  // Game state
+  let pizzaMan = { x: 1, y: 1, dir: null, nextDir: null };
+  let ghosts = [
+    {name: "Uriah", x: 10, y: 7, color: 'red', dir: null, frightened: false},
+    {name: "Kobe", x: 10, y: 8, color: 'pink', dir: null, frightened: false},
+    {name: "Brody", x: 9, y: 8, color: 'cyan', dir: null, frightened: false},
+    {name: "Elliot", x: 11, y: 8, color: 'orange', dir: null, frightened: false},
+  ];
+
+  let dots = [];
+  let score = 0;
+  let lives = 3;
+  let gameOver = false;
+  let powerMode = false;
+  let powerModeTimer = 0;
+
+  // Load sounds
+  const sounds = {};
+  const soundFiles = {
+    chomp: "https://actions.google.com/sounds/v1/cartoon/pop.ogg",
+    death: "https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg",
+    powerUp: "https://actions.google.com/sounds/v1/cartoon/boing.ogg",
+    ghostEat: "https://actions.google.com/sounds/v1/cartoon/slide_whistle_to_drum_hit.ogg"
+  };
+  for (const [key, url] of Object.entries(soundFiles)) {
+    const audio = new Audio(url);
+    sounds[key] = audio;
+  }
+
+  // Initialize dots from maze
+  function initDots() {
+    dots = [];
+    for (let y=0; y<rows; y++) {
+      for (let x=0; x<cols; x++) {
+        const c = maze[y] && maze[y][x];
+        if (c === '.' || c === 'o') {
+          dots.push({x, y, power: c === 'o', eaten: false});
+        }
+      }
+    }
+  }
+
+  initDots();
+
+  function drawMaze() {
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#ffa500';
+    ctx.lineWidth = 2;
+
+    for (let y=0; y<rows; y++) {
+      for (let x=0; x<cols; x++) {
+        const c = maze[y] && maze[y][x];
+        if (c === '#') {
+          ctx.fillStyle = '#ffa500';
+          ctx.fillRect(x*tileSize, y*tileSize, tileSize, tileSize);
+        }
+      }
+    }
+  }
+
+  function drawDots() {
+    dots.forEach(d => {
+      if (d.eaten) return;
+      if (d.power) {
+        ctx.fillStyle = '#ff6600';
+        ctx.beginPath();
+        ctx.arc(d.x*tileSize + tileSize/2, d.y*tileSize + tileSize/2, tileSize/3, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(d.x*tileSize + tileSize/2, d.y*tileSize + tileSize/2, tileSize/6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+  }
+
+  function drawPizzaMan() {
+    const px = pizzaMan.x * tileSize + tileSize / 2;
+    const py = pizzaMan.y * tileSize + tileSize / 2;
+
+    ctx.fillStyle = 'yellow';
+    ctx.beginPath();
+    let startAngle = 0.25 * Math.PI;
+    let endAngle = 1.75 * Math.PI;
+
+    if (pizzaMan.dir === 'left') {
+      startAngle = 1.25 * Math.PI;
+      endAngle = 0.75 * Math.PI;
+    } else if (pizzaMan.dir === 'up') {
+      startAngle = 1.75 * Math.PI;
+      endAngle = 1.25 * Math.PI;
+    } else if (pizzaMan.dir === 'down') {
+      startAngle = 0.75 * Math.PI;
+      endAngle = 0.25 * Math.PI;
+    }
+
+    ctx.moveTo(px, py);
+    ctx.arc(px, py, tileSize / 2 - 2, startAngle, endAngle, false);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawGhost(g) {
+    const px = g.x * tileSize + tileSize / 2;
+    const py = g.y * tileSize + tileSize / 2;
+
+    ctx.fillStyle = g.frightened ? '#0000ff' : g.color;
+    ctx.beginPath();
+    ctx.arc(px, py, tileSize / 2 - 2, Math.PI, 0, false);
+    ctx.lineTo(px + tileSize / 2 - 2, py + tileSize / 2 - 2);
+    ctx.lineTo(px - tileSize / 2 + 2, py + tileSize / 2 - 2);
+    ctx.closePath();
+    ctx.fill();
+
+    // Eyes
+    ctx.fillStyle = 'white';
+    ctx.beginPath();
+    ctx.ellipse(px - 5, py - 3, 4, 6, 0, 0, 2 * Math.PI);
+    ctx.ellipse(px + 5, py - 3, 4, 6, 0, 0, 2 * Math.PI);
+    ctx.fill();
+
+    ctx.fillStyle = 'black';
+    ctx.beginPath();
+    ctx.ellipse(px - 5 + (g.dir === 'left' ? -2 : g.dir === 'right' ? 2 : 0), py - 3, 2, 3, 0, 0, 2 * Math.PI);
+    ctx.ellipse(px + 5 + (g.dir === 'left' ? -2 : g.dir === 'right' ? 2 : 0), py - 3, 2, 3, 0, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
+  function canMove(x, y) {
+    if (x < 0 || y < 0 || y >= maze.length || x >= maze[0].length) return false;
+    return maze[y][x] !== '#';
+  }
+
+  function updatePizzaMan() {
+    if (pizzaMan.nextDir) {
+      const nx = pizzaMan.x + (pizzaMan.nextDir === 'left' ? -1 : pizzaMan.nextDir === 'right' ? 1 : 0);
+      const ny = pizzaMan.y + (pizzaMan.nextDir === 'up' ? -1 : pizzaMan.nextDir === 'down' ? 1 : 0);
+      if (canMove(nx, ny)) pizzaMan.dir = pizzaMan.nextDir;
+      pizzaMan.nextDir = null;
+    }
+    if (pizzaMan.dir) {
+      const nx = pizzaMan.x + (pizzaMan.dir === 'left' ? -1 : pizzaMan.dir === 'right' ? 1 : 0);
+      const ny = pizzaMan.y + (pizzaMan.dir === 'up' ? -1 : pizzaMan.dir === 'down' ? 1 : 0);
+      if (canMove(nx, ny)) {
+        pizzaMan.x = nx;
+       
